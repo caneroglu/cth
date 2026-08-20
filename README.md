@@ -116,12 +116,7 @@ gürültü sayılmaz.
 
 ![2.4 V zenerler](docs/img/zenerler.jpg)
 
-Kaynak: iki adet 2.4 V zener. Bu gerilim tesadüf değil. 2.7 V altında
-depleksiyon bölgesi o kadar ince kalıyor ki elektron hızlanacak mesafeyi
-bulamıyor — yani avalanche mekanizması devreye giremiyor. Piyasadaki "kuantum"
-etiketli cihazların çoğu 12–24 V'ta, tam avalanche bölgesinde çalışır: sinyal
-güçlüdür, 10× büyütür geçersin. Ben zor tarafı seçtim, bedelini de 250–300×
-kazanç kurmak zorunda kalarak ödedim.
+Kaynak: iki adet 2.4 V zener.
 
 ### Pin haritası
 
