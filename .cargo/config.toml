@@ -1,0 +1,79 @@
+# ==========================================================================
+#  Cargo yapilandirmasi — hedef, linker bayraklari, runner
+# ==========================================================================
+
+[build]
+# Hedef mimari: Cortex-M3 (STM32F103), FPU yok, isletim sistemi yok.
+#   thumbv7m  -> Cortex-M3 komut seti
+#   none      -> OS yok (bare metal)
+#   eabi      -> donanimsal float yok (F103'te FPU zaten yok; eabihf OLMAZ)
+# Bu satir sayesinde her komutta "--target thumbv7m-none-eabi" yazmiyoruz.
+target = "thumbv7m-none-eabi"
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+# "cargo run" -> derle, cipe flash'la, RTT loglarini terminale bagla.
+# probe-rs cipi bilmek zorunda: flash algoritmasi, sayfa boyutu ve bellek
+# haritasi cip tanimindan geliyor.
+#
+# Not: Picoprobe (CMSIS-DAP, 2e8a:000c) takili, ayrica --probe vermeye gerek yok.
+#
+# --rtt-channel-mode no-block-skip  ZORUNLU, kozmetik degil:
+# probe-rs run'un VARSAYILANI "block-if-full" ve bu ayar firmware'in kendi
+# secimini EZIYOR (probe-rs run --help: "[default: block-if-full]").
+# O modda RTT tamponu dolunca firmware host okuyana kadar SPIN eder.
+# Bir QRNG'de bu felaket: hasat dongusunun zamanlamasi host'un okuma hizina
+# baglanir, ornekleme periyodu bozulur, entropi olcumu carpitilir.
+# probe-rs'in kendi belgesi de uyariyor: "if the application writes within a
+# critical section, using this mode can cause the application to freeze".
+# no-block-skip = tampon doluysa o yazmayi tamamen atla. Eksik byte olur,
+# BOZUK byte veya bozulmus zamanlama olmaz. Dogru takas budur.
+runner = "probe-rs run --chip STM32F103C8 --rtt-channel-mode no-block-skip"
+
+rustflags = [
+  # --- Linker betigi ---
+  # cortex-m-rt'nin ana betigi. Vector table'i, .text/.rodata/.data/.bss
+  # yerlesimini ve reset handler'i tanimlar. Icinde "INCLUDE memory.x" var;
+  # memory.x'i build.rs OUT_DIR'e koyup arama yoluna ekliyor.
+  "-C", "link-arg=-Tlink.x",
+
+  # --- defmt betigi ---
+  # defmt'in numarasi: log string'lerini CIHAZA HIC KOYMAZ. Sadece bir indeks
+  # gonderir, string'ler ELF'in ayri bir bolumunde kalir ve host tarafinda
+  # cozulur. Bu betik o bolumu tanimlar. Olmadan link patlar.
+  "-C", "link-arg=-Tdefmt.x",
+
+  # --- Sayfa hizalamasini kapat ---
+  # Linker bolumleri sayfa sinirina hizalayabilir (MMU'lu sistemlerde sayfa
+  # korumasi icin gerekli). Cortex-M'de MMU yok, o hizalama bosa flash yakar.
+  #
+  # DURUSTLUK NOTU: bu iskelette OLCTUM, su an hicbir kazanci yok —
+  # --nmagic ile de --nmagic'siz de FLASH=9328 bayt cikti. Bolum sayisi
+  # arttikca fark etmesi beklenir; sigorta olarak duruyor, kanitlanmis bir
+  # kazanc olarak degil. Bolum yerlesimi karisirsa ilk supheli bu olsun.
+  "-C", "link-arg=--nmagic",
+]
+
+[env]
+# defmt'in DERLEME ZAMANI log filtresi.
+# Bu seviyenin altindaki cagrilar ikili dosyaya HIC girmez — ne kod ne string.
+# Yani calisma zamani maliyeti sifir, flash maliyeti de sifir.
+#
+# Gecici olarak acmak icin kabukta ez:
+#   DEFMT_LOG=trace cargo embed --release
+# ([env] girisleri "force" degil, yani ortamdaki deger onceliklidir.)
+DEFMT_LOG = "info"
+
+[alias]
+# --- Kisayollar ---
+# "cargo embed" = flash + tam ekran RTT arayuzu (Embed.toml'a bakar).
+# "cargo run"   = flash + duz terminal log akisi (runner'a bakar).
+#
+# Hepsi --release: 64 KB'lik flash'ta release (lto + codegen-units=1) ciddi
+# fark yaratiyor. Olculdu: eski projede test binary'si debug'da %91 flash,
+# release'de %56.
+rr = "embed --release"
+
+# Boyut raporu: bolum bolum flash/RAM tuketimi.
+# .text + .rodata + .vector_table = FLASH
+# .data + .bss + .uninit          = RAM
+sz = "size --release -- -A"

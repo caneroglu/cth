@@ -1,0 +1,7 @@
+# Toolchain'i repoya sabitliyoruz: rustup bu dosyayi gorunce dogru surumu ve
+# hedefi kendisi kurar. "bende calisiyordu" sinifi hatalarin buyuk kismi
+# boylece bitiyor.
+[toolchain]
+channel = "nightly"
+components = ["rust-src", "rustfmt", "llvm-tools"]
+targets = ["thumbv7m-none-eabi"]

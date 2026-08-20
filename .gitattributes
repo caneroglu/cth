@@ -1,0 +1,17 @@
+# Satir sonlarini normalize et.
+# Depoda her sey LF; Windows'ta calisirken git istedigini yapar.
+# Bu olmadan her commit'te "LF will be replaced by CRLF" uyarisi akiyor ve
+# Linux'tan klonlayan biri tum dosyalari degismis goruyor.
+* text=auto eol=lf
+
+# Ikili dosyalar — dokunma.
+*.bin  binary
+*.elf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.pdf  binary
+
+# Linker betikleri: satir sonu onemli degil ama LF sabit kalsin.
+*.x    text eol=lf

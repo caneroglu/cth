@@ -1,0 +1,144 @@
+[package]
+name = "cth-0_1"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+# ==========================================================================
+#  BAGIMLILIKLAR
+#
+#  IKI KATMAN VAR ve ayrimi onemli:
+#
+#  [dependencies]  -> hem hedefte hem HOST'ta derlenen, tasinabilir seyler.
+#                     src/lib.rs (entropi mantigi) sadece bunlari kullanir,
+#                     boylece `cargo test --lib --target <host-uclusu>` ile
+#                     saglik testlerini donanimsiz dogrulayabiliyoruz.
+#                     (Host uclusu: `rustc -vV | grep host`)
+#
+#  [target.'cfg(target_os = "none")'.dependencies]
+#                  -> SADECE bare-metal hedefte. embassy-executor icinde ARM
+#                     assembly ("sev") var, host'a derlenmez; defmt-rtt /
+#                     panic-probe da host'ta global_logger olmadigi icin
+#                     link ettirmez. Bu bolume koyunca host testi onlari
+#                     hic gormuyor.
+#
+#  Periferik surucüleri (ssd1306, eeprom24x) ve kripto (sha2, hmac) ilgili
+#  modulu yazdigimizda eklenecek — kullanmadigimiz crate'i koymuyoruz.
+# ==========================================================================
+[dependencies]
+heapless = { version = "0.9", default-features = false }
+
+# Kripto — conditioner (HMAC-SHA256 ekstraktor) ve HMAC_DRBG icin.
+# default-features = false: no_std. Ikisi de host'ta da derlenir, o yuzden
+# burada; entropi kutuphanesi bunlari kullaniyor ve host'ta test ediliyor.
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+
+[target.'cfg(target_os = "none")'.dependencies]
+
+# --- HAL ---
+# NOT: "memory-x" feature'i BILEREK yok.
+# Acik olsa embassy-stm32'nin build.rs'i de bir memory.x uretir ve linker
+# arama yolunda iki tane olur; hangisinin bulunacagi -L sirasina kalir =>
+# belirsiz davranis. Bellek haritasinin tek sahibi ./memory.x.
+embassy-stm32 = { version = "0.6.0", features = [
+    "defmt",
+    "stm32f103c8",
+    "unstable-pac",
+    "time-driver-tim2",
+    "time",
+] }
+
+embassy-executor = { version = "0.10.0", features = [
+    "platform-cortex-m",
+    "executor-thread",
+    "defmt",
+] }
+
+# tick-hz-32_768: zamanlayici cozunurlugu ~30.5 us.
+# Hasat penceresini bununla olcecegiz; daha yuksek tick daha cok kesme demek,
+# ADC ornekleme dongusunu bosuna bolmesin diye dusuk tutuyoruz.
+embassy-time = { version = "0.5.1", features = [
+    "defmt",
+    "defmt-timestamp-uptime",
+    "tick-hz-32_768",
+] }
+
+# Task'lar arasi paylasim: I2C mutex'i (OLED + EEPROM ayni bus'ta),
+# entropi havuzu icin kanal/sinyal.
+embassy-sync = { version = "0.8.0", features = ["defmt"] }
+embassy-futures = "0.1.2"
+
+# --- Cekirdek ---
+cortex-m = { version = "0.7.6", features = [
+    "inline-asm",
+    "critical-section-single-core",
+] }
+cortex-m-rt = "0.7.0"
+
+# --- Loglama / veri kanali ---
+# defmt-rtt DEGIL, rtt-target.
+# Sebep: defmt-rtt RTT kontrol blogunu "max_up_channels: 1,
+# max_down_channels: 0" olarak sabitliyor ve rtt-target ile birlikte
+# kullanilmayi bilerek imkansiz kiliyor (defmt-rtt-1.3.0/src/lib.rs:98-106).
+# Bize 3 kanal lazim: log (up0), rastgele byte akisi (up1), komut (down0).
+# rtt-target hem cok kanali hem de set_defmt_channel() ile defmt'i destekliyor.
+defmt = "1.0.1"
+rtt-target = { version = "0.6.2", features = ["defmt"] }
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+
+# --- Ekran ---
+# I2C OLED. EEPROM ile ayni bus'ta ama EEPROM sadece acilista okunuyor,
+# o yuzden mutex'e gerek yok: acilistan sonra bus ekrana devrediliyor.
+ssd1306 = "0.10.0"
+embedded-graphics = "0.8.2"
+
+# --- Yardimci ---
+static_cell = "2.0.0"
+
+# Istatistik (ortalama/varyans) — elle yazmak yerine. no_std, gomulu tarafta
+# yaygin, trait'leri dogrudan &[u16] uzerinde calisiyor.
+#
+# MALIYET, OLCULDU (F103'te FPU YOK, f32 = soft-float):
+#     elle yazilmis tamsayi ACF        FLASH 38 084 B
+#     micromath (f32)                  FLASH 40 668 B   (+2 584 B, +%4.0)
+# Crate'in kendisi bedava — zaten agacta (embedded-graphics cekiyor) ve
+# bagimlilik olarak eklemek 12 bayt fark yaratti. Maliyetin tamami f32'ye
+# gecmekten geliyor.
+#
+# NEDEN YINE DE DEGER: burada kullanildigi tek yer ACILISTA BIR KEZ kosan
+# teshis ciktisi (report_acf). Entropi hatti ve kripto tamamen tamsayi,
+# onlara dokunmuyor. 64 KB'in %62'sindeyiz, %38 pay var. Flash sikisirsa
+# ilk geri alinacak yer burasi.
+#
+# NOT: micromath'in variance'i ORNEK varyansi (n-1 paydali) ve f32.
+# Teshis ciktisi icin fazlasiyla yeterli.
+#
+# "statistics" feature'i SART: modul varsayilan olarak kapali. Acmak sadece
+# bu modulu derliyor, baska bir sey getirmiyor (feature'lar bagimsiz:
+# quaternion / statistics / vector).
+micromath = { version = "2.1", features = ["statistics"] }
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+# debug = 2: defmt/probe-rs'in backtrace cozebilmesi icin sembolleri tutar.
+# Bu FLASH'a gitmez — sadece host'taki ELF'te durur, cipe yazilmaz.
+debug = 2
+opt-level = "s"
+lto = true
+# Tek codegen unit = daha iyi optimizasyon, daha kucuk ikili. Derleme yavaslar
+# ama 64 KB flash'ta boyut derleme suresinden onemli.
+codegen-units = 1
+
+[features]
+default = []
+
+# Ham 12-bit ornek dokumu (RTT kanal 1 -> tools/analyze.py).
+# Normal hasat/saglik modunu KAPATIR; teshis ve uzun yakalama icindir.
+#   cargo build --release --features dump
+# Kullanim:
+#   1) python3 tools/analyze.py
+#   2) cargo embed --release --features dump
+dump = []

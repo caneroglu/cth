@@ -1,0 +1,171 @@
+# ==========================================================================
+#  Embed.toml — "cargo embed" yapilandirmasi  (probe-rs / cargo-embed 0.32)
+# ==========================================================================
+#  "cargo run" ile farki:
+#    cargo run   -> runner'i cagirir (.cargo/config.toml), duz log akisi
+#    cargo embed -> flash + TAM EKRAN RTT arayuzu (sekmeli, kaydirmali)
+#
+#  Profil mantigi: buradaki "default" bir CONFIG profili — cargo'nun
+#  dev/release profiliyle ILGISI YOK. Cargo profili CLI'dan geliyor:
+#      cargo embed --release   -> release derler
+#      cargo embed             -> dev derler
+#
+#  Semadaki tum anahtarlar probe-rs-tools 0.32.0'in kendi default.toml'undan
+#  dogrulandi (cmd/cargo_embed/config/default.toml).
+# ==========================================================================
+
+[default.general]
+# Cip adi. probe-rs bunu flash algoritmasi, sayfa boyutu ve bellek haritasi
+# icin kullanir. Burada yazili olunca komut satirinda --chip vermek gerekmez.
+#
+# Dogrulanmis: DBGMCU_IDCODE = 0x20036410 -> DEV_ID 0x410 (medium-density)
+chip = "STM32F103C8"
+
+chip_descriptions = []
+
+# probe-rs'in KENDI ic loglari (firmware loglari degil!). Firmware tarafi
+# DEFMT_LOG ile ayarlaniyor. Probe baglanti sorunu ayiklarken "DEBUG" yap.
+log_level = "WARN"
+
+# nRESET pinini basili tutarak baglan.
+# true gerektigi durum: firmware acilista SWD pinlerini kapatiyorsa ya da
+# derin uykuya giriyorsa.
+connect_under_reset = false
+
+[default.probe]
+# SWD: 2 telli hata ayiklama (SWDIO + SWCLK). JTAG'in aksine PB3/PB4/PA15'i
+# serbest birakir — o pinler MUX icin lazim, yani SWD zorunlu.
+protocol = "Swd"
+
+# Belirli bir probe'a kilitlemek istersen (birden fazla takiliysa):
+# usb_vid = "2e8a"
+# usb_pid = "000c"
+# serial  = "69387C285A0718D8"   # takili Picoprobe
+
+# SWD saat hizi (kHz). Bos = probe-rs varsayilani.
+# Flash yavas geliyorsa yukselt; "DAP error" / kopma alirsan dusur.
+# speed = 4000
+
+[default.flashing]
+enabled = true
+
+# Silinen ama ELF'te karsiligi olmayan byte'lari eski icerigiyle geri yaz.
+# false = daha hizli. Kalibrasyon harici EEPROM'da (I2C) duracak, flash'ta
+# kalici veri tutmuyoruz => false guvenli.
+restore_unwritten_bytes = false
+
+do_chip_erase = false
+disable_double_buffering = false
+preverify = false
+
+# Yazdiktan sonra geri okuyup dogrula.
+# ACIK: bu bir RNG projesi. "Uretilen rastgele veriyi su firmware uretti"
+# diyeceksek, cipteki imajin yazmak istedigimiz imaj oldugundan emin olmak
+# lazim. Maliyeti birkac saniye, karsiligi sessiz flash bozulmasini yakalamak.
+verify = true
+
+read_flasher_rtt = false
+
+[default.reset]
+enabled = true
+
+# Reset sonrasi CPU'yu durdurup bekleme.
+# true yapmak isteyebilecegin durum: acilistaki ilk milisaniyeleri debugger'la
+# incelemek. Ama halt'ta beklerken periferik zamanlamasi bozulur — entropi
+# olcumlerini bu modda kiyaslama.
+halt_afterwards = false
+
+[default.rtt]
+# RTT (Real-Time Transfer): RAM'de bir ring buffer uzerinden calisir.
+# UART pini harcamaz, debug probe zaten bagli oldugu icin bedavaya gelir.
+enabled = true
+
+# Firmware'in RTT blogunu RAM'de kurmasini bekleme suresi (ms).
+timeout = 3000
+
+# Cikisi ayrica diske yaz. Uzun entropi kosularini kaydetmek icin ise yarar.
+# Acarsan .gitignore'da "logs/" zaten hazir.
+log_enabled = false
+log_path = "./logs"
+
+# --------------------------------------------------------------------------
+#  KANAL HARITASI — firmware'deki rtt_init! ile BIREBIR ayni olmali
+#
+#    up   0  "defmt"  defmt loglari                 -> insan okur
+#    up   1  "bytes"  rastgele byte akisi (ham/DRBG)-> makine okur
+#    down 0  "cmd"    host -> cihaz komutlari
+#
+#  Kanal 0'in adi "defmt" OLMAK ZORUNDA: probe-rs bir up kanalini defmt
+#  olarak cozmeye ancak adi tam olarak buysa karar veriyor. "log" dedigimizde
+#  ham defmt cerceveleri (anlamsiz baytlar) aldik — olculdu. Ayni uyari
+#  src/main.rs'te rtt_init! makrosunun basinda da duruyor.
+#
+#  "mode" BILEREK bos birakildi: firmware ne dediyse o kalsin.
+#  Buradan "BlockIfFull" dayatmak, host okumadiginda firmware'i RTT yazarken
+#  BEKLETIR — hasat dongusunun zamanlamasini bozar ve entropi olcumunu
+#  carpitir. Bir RNG'de bunu istemeyiz.
+# --------------------------------------------------------------------------
+up_channels = [
+    { channel = 0, format = "Defmt", show_location = true, show_timestamps = true },
+
+    # Ham byte kanali.
+    #
+    # DIKKAT — YON TERS: cargo-embed burada SUNUCU DEGIL, ISTEMCI.
+    # Kaynak: rttui/tcp.rs:21 -> TcpStream::connect(self.address)
+    # Yani bu adrese O BAGLANIR. Host tarafinda DINLEYEN olmak zorundasin:
+    #
+    #     nc -l -p 19021 > random.bin        # once bunu baslat
+    #     cargo embed --release              # sonra bunu
+    #
+    # Ters yaparsan ("nc 127.0.0.1 19021") hicbir sey gelmez, sessizce bekler.
+    #
+    # NEDEN BU YOL, "probe-rs run --target-output-file" DEGIL:
+    # O yol ciktiyi METIN sanip UTF-8'e zorluyor. Olculdu: sayac desenli
+    # test verisinde 0x7F ustundeki HER bayt EF BF BD (U+FFFD) ile
+    # degistirildi, ayrica araya "13:45:43.767: " gibi zaman damgalari
+    # enjekte edildi. Rastgele veri icin tamamen kullanilamaz.
+    # Bu socket yolu ise dogrulandi: 8192 bayt, 0 kirilma, baytlarin
+    # tam %50'si 0x7F ustu => ikili seffaflik tam.
+    { channel = 1, format = "BinaryLE", socket = "127.0.0.1:19021" },
+]
+
+# Host -> cihaz. Komut kanali:
+#   - RAW / DRBG cikti modu secimi
+#   - gercek UNIX zamani enjeksiyonu (build.rs'teki bayat BUILD_EPOCH damgasini
+#     boylece tamamen kaldirabilecegiz)
+down_channels = [
+    { channel = 0 },
+]
+
+# TUI sekmeleri. "log" sekmesine yazdigin sey down 0'a gider.
+tabs = [
+    { up_channel = 0, down_channel = 0, name = "log" },
+    { up_channel = 1, name = "bytes" },
+]
+
+[default.gdb]
+# probe-rs + defmt ile ayiklama genelde yeterli oldugu icin kapali.
+# Breakpoint'li adim adim ayiklama gerekirse:
+#   enabled = true, sonra: arm-none-eabi-gdb -ex "target remote :1337"
+enabled = false
+gdb_connection_string = "127.0.0.1:1337"
+
+
+# ==========================================================================
+#  Ek config profili: "cargo embed quiet"
+#  Amac: RTT arayuzu acmadan sadece flash'la (hizli iterasyon, CI).
+#
+#  Config'te bir "derives" anahtari gorursen kanma: probe-rs-tools 0.32'de o
+#  alan struct'ta TANIMLI ama kodda HIC OKUNMUYOR (config/mod.rs:76, baska
+#  referansi yok). Miras oradan gelmiyor — cargo-embed once kendi gomulu
+#  default.toml'unu, sonra bu dosyayi merge ediyor.
+#
+#  Config struct'i deny_unknown_fields ile isaretli: yanlis yere konmus veya
+#  yazim hatali bir anahtar sessizce yutulmaz, parse hatasi verir. Bu iyi.
+#
+#  Dosyayi flash'lamadan dogrulamak icin (profil secimi build'den ONCE olur,
+#  bu komut ne derler ne cipe dokunur):
+#      cargo embed __gecersiz__
+# ==========================================================================
+[quiet.rtt]
+enabled = false

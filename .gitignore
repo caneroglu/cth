@@ -1,0 +1,29 @@
+# --- Rust / Cargo ---
+/target
+
+# Cargo.lock BILEREK takipte.
+# Bu bir firmware (kutuphane degil): hangi bagimlilik surumleriyle
+# derlendigi, uretilen rastgele verinin kaniti olacak. Kutuphanelerde
+# gitignore edilir, ikili urunlerde EDILMEZ.
+
+# --- probe-rs / cargo-embed ---
+# Embed.toml'da log_enabled=true yaparsan RTT gecmisi buraya duser.
+/logs
+
+# --- Host araclari ---
+__pycache__/
+*.pyc
+.venv/
+
+# --- Uretilen veri ve raporlar ---
+*.bin
+qrng_report_*.md
+qrng_report_*.sig.json
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
